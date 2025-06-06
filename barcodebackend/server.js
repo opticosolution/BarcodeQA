@@ -1466,7 +1466,7 @@ app.put('/settings/barcode-range', authenticateToken, checkRole(['admin', 'super
 });
 
 // Start the server
-const PORT = process.env.PORT || 5003;
+const PORT = process.env.PORT || 5002;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
