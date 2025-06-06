@@ -31,7 +31,7 @@ app.use(
 );
 
 app.use(bodyParser.json({ limit: '10mb' }));
-
+// mongodb+srv://balmukundoptico:lets12help@job-connector.exb7v.mongodb.net/barcodeDemo
 app.use('/barcodes', require('./routes/generatedBarcodes'));
 mongoose.connect('mongodb+srv://Optico:optico2025@barcode.p15eoss.mongodb.net/BarcodeQA', {
   // mongoose.connect('mongodb://localhost:27017/barcodeDemo', {
@@ -344,7 +344,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
       }
     }
 
-    const doc = new jsPDF({ unit: 'mm', format: [330.2, 482.6] });
+    const doc = new jsPDF({ unit: 'mm', format: [330.2, 482.6], compress: true });
     const cols = 7;
     const rows = 28;
     const layoutWidth = 286;
@@ -371,7 +371,7 @@ app.post('/generate-pdf', authenticateToken, async (req, res) => {
         const pngBuffer = await bwipjs.toBuffer({
           bcid: 'code128',
           text: barcodeValue,
-          scale: 2,
+          scale: 1,
           height: barcodeHeight,
           includetext: false,
         });
@@ -1039,17 +1039,35 @@ app.get('/barcode-ranges', authenticateToken, checkRole(['admin', 'superadmin'])
 app.post('/barcode-ranges', authenticateToken, checkRole(['admin', 'superadmin']), async (req, res) => {
   try {
     const { start, end, points } = req.body;
+
     if (!start || !end || points === undefined) {
       return res.status(400).json({ message: 'Start, end, and points are required' });
     }
     if (!/^[A-Z0-9]+$/.test(start) || !/^[A-Z0-9]+$/.test(end)) {
       return res.status(400).json({ message: 'Barcodes must be alphanumeric' });
     }
-    if (start > end) {
-      return res.status(400).json({ message: 'End barcode must be greater than or equal to start barcode' });
-    }
     if (!Number.isInteger(points) || points < 0) {
       return res.status(400).json({ message: 'Points must be a non-negative integer' });
+    }
+
+    const startMatch = start.match(/^(.*?)(\d+)$/);
+    if (!startMatch) {
+      return res.status(400).json({ message: 'Unable to parse start barcode format' });
+    }
+
+    const prefix = startMatch[1];       // e.g., "OPT1LA"
+    const startDigits = startMatch[2];  // e.g., "001"
+    const startNum = parseInt(startDigits, 10);
+    const startNumLength = startDigits.length;
+
+    const endMatch = end.match(/(\d+)$/);
+    if (!endMatch) {
+      return res.status(400).json({ message: 'Unable to parse end barcode format' });
+    }
+    const endNum = parseInt(endMatch[1], 10);
+
+    if (startNum > endNum) {
+      return res.status(400).json({ message: 'End barcode must be greater than or equal to start barcode' });
     }
 
     const range = new BarcodeRange({
@@ -1061,33 +1079,53 @@ app.post('/barcode-ranges', authenticateToken, checkRole(['admin', 'superadmin']
 
     await range.save();
 
-    // Generate and store pre-generated barcodes with suffixes
+    const baseValues = [];
+    for (let num = startNum; num <= endNum; num++) {
+      const numStr = num.toString().padStart(startNumLength, '0');
+      baseValues.push(`${prefix}${numStr}`);
+    }
+
     const barcodes = [];
-    let current = start;
-    while (current <= end) {
-      let suffix;
-      let fullValue;
+    const existingValues = new Set();
+    const generatedValues = new Set();
+
+    // Query existing barcodes for this range to avoid duplicates
+    const existing = await PreGeneratedBarcode.find({
+      baseValue: { $in: baseValues },
+    }).select('value');
+
+    existing.forEach((b) => existingValues.add(b.value));
+
+    for (const baseValue of baseValues) {
+      let fullValue, suffix;
+      let attempts = 0;
+
       do {
-        suffix = generateRandomSuffix();
-        fullValue = `${current}-${suffix}`;
-      } while (await PreGeneratedBarcode.findOne({ value: fullValue }));
-      
+        suffix = generateRandomSuffix(); // e.g., "A1B2C"
+        fullValue = `${baseValue}-${suffix}`;
+        attempts++;
+      } while (
+        (existingValues.has(fullValue) || generatedValues.has(fullValue)) &&
+        attempts < 10
+      );
+
+      if (attempts >= 10) {
+        console.warn(`Skipping ${baseValue}: could not generate unique suffix`);
+        continue;
+      }
+
+      generatedValues.add(fullValue);
       barcodes.push({
         value: fullValue,
-        baseValue: current,
+        baseValue,
         suffix,
         rangeId: range._id,
         adminId: req.user._id,
         points,
       });
-      
-      // Increment current (assuming alphanumeric increment, e.g., OPT100 -> OPT101)
-      const prefix = current.match(/^[A-Z]+/)?.[0] || '';
-      const number = parseInt(current.match(/\d+$/)?.[0] || '0');
-      current = `${prefix}${number + 1}`;
     }
 
-    await PreGeneratedBarcode.insertMany(barcodes);
+    await PreGeneratedBarcode.insertMany(barcodes, { ordered: false });
 
     res.status(201).json({
       message: 'Barcode range created successfully with pre-generated barcodes',
@@ -1099,6 +1137,11 @@ app.post('/barcode-ranges', authenticateToken, checkRole(['admin', 'superadmin']
     res.status(500).json({ message: 'Server error creating barcode range' });
   }
 });
+
+
+
+
+
 
 // Update a barcode range
 app.put('/barcode-ranges/:id', authenticateToken, checkRole(['admin', 'superadmin']), async (req, res) => {
@@ -1275,7 +1318,7 @@ app.post('/generate-barcode-pdf', authenticateToken, checkRole(['superadmin']), 
       const pngBuffer = await bwipjs.toBuffer({
         bcid: 'code128',
         text: barcode.value,
-        scale: 2,
+        scale: 1,
         height: 20,
         includetext: false,
       });
@@ -1421,12 +1464,9 @@ app.put('/settings/barcode-range', authenticateToken, checkRole(['admin', 'super
     res.status(500).json({ message: 'Server error updating barcode range setting' });
   }
 });
-app.get('/',(req,res)=>{
-  res.send("QA server running")
-})
 
 // Start the server
-const PORT = process.env.PORT || 5002;
-app.listen(PORT,'0.0.0.0', () => {
+const PORT = process.env.PORT || 5003;
+app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

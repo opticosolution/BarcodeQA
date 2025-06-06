@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useContext, useCallback, useMemo } from 'react';
-import { View,StyleSheet, Platform, ScrollView, ActivityIndicator, Animated, BackHandler, TouchableOpacity } from 'react-native';
-import { Button, Card, Text, useTheme } from 'react-native-paper';
-import { SearchBar } from '@rneui/themed';
-// import { TextInput, IconButton } from 'react-native-paper';
+import { View, StyleSheet, Platform, FlatList, ActivityIndicator, Animated, BackHandler, TouchableOpacity, ScrollView } from 'react-native';
+import { Button, Card, Text, TextInput, useTheme } from 'react-native-paper';
 import { BarCodeScanner } from 'expo-barcode-scanner';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -10,20 +8,17 @@ import Toast from 'react-native-toast-message';
 import ThemeToggle from '../components/ThemeToggle';
 import { ThemeContext } from '../ThemeContext';
 import { useFocusEffect } from '@react-navigation/native';
-import debounce from 'lodash.debounce';
 import { MaterialIcons } from '@expo/vector-icons';
 
-// Backend API base URL
-
 // const BASE_URL = 'http://localhost:5000';
-const BASE_URL = 'http://3.82.246.165:5000';
+// const BASE_URL = 'https://barcodescane-backend.onrender.com';
+const BASE_URL = 'http://52.72.238.42:5002';
 
 
 export default function UserDashboard({ navigation }) {
   const { colors } = useTheme();
   const { isDarkMode } = useContext(ThemeContext);
 
-  // State variables
   const [hasPermission, setHasPermission] = useState(null);
   const [scanned, setScanned] = useState(false);
   const [barcodeData, setBarcodeData] = useState(null);
@@ -39,10 +34,13 @@ export default function UserDashboard({ navigation }) {
   const [scanRegion, setScanRegion] = useState(null);
   const scanLineAnim = React.useRef(new Animated.Value(0)).current;
 
-  // Debounced search handler
-  const debouncedSetSearchBarcode = useCallback(debounce((value) => setSearchBarcode(value), 200), []);
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => null,
+      gestureEnabled: false,
+    });
+  }, [navigation]);
 
-  // Token refresh every 50 minutes
   useEffect(() => {
     const refreshToken = async () => {
       try {
@@ -77,7 +75,6 @@ export default function UserDashboard({ navigation }) {
     return () => clearInterval(interval);
   }, [navigation]);
 
-  // Initialize user data and camera permissions
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -104,7 +101,6 @@ export default function UserDashboard({ navigation }) {
     initialize();
   }, [navigation]);
 
-  // Back button handling
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== 'web') {
@@ -118,7 +114,6 @@ export default function UserDashboard({ navigation }) {
     }, [navigation])
   );
 
-  // Animate scanner line
   useEffect(() => {
     if (showScanner) {
       Animated.loop(
@@ -130,20 +125,23 @@ export default function UserDashboard({ navigation }) {
           }),
           Animated.timing(scanLineAnim, {
             toValue: 0,
-            duration: 800,
+            duration: 600,
             useNativeDriver: true,
           }),
         ])
       ).start();
     }
-  }, [scanLineAnim, showScanner]);
+  }, [showScanner]);
 
-  const scanLineTranslate = scanLineAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 180],
-  });
+  const scanLineTranslate = useMemo(
+    () =>
+      scanLineAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 180],
+      }),
+    [scanLineAnim]
+  );
 
-  // Handle unauthorized errors
   const handleUnauthorized = useCallback(
     async (error) => {
       if (error.response?.status === 401 || error.response?.status === 403) {
@@ -161,11 +159,11 @@ export default function UserDashboard({ navigation }) {
     [navigation]
   );
 
-  // Fetch user profile and admin details
   const fetchUserProfile = useCallback(
     async (userId) => {
+      if (!userId) return;
       try {
-        if (!userId) throw new Error('Invalid user ID');
+        setLoading(true);
         const token = await AsyncStorage.getItem('token');
         if (!token) throw new Error('No token found');
         const response = await axios.get(`${BASE_URL}/users/${userId}`, {
@@ -185,7 +183,7 @@ export default function UserDashboard({ navigation }) {
           id: response.data._id,
           name: response.data.name,
           mobile: response.data.mobile,
-          points: response.data.points,
+          points: response.data.points || 0,
           location: response.data.location || 'Unknown',
           adminId: response.data.adminId,
           status: response.data.status,
@@ -207,35 +205,31 @@ export default function UserDashboard({ navigation }) {
         Toast.show({
           type: 'error',
           text1: 'Profile Fetch Failed',
-          text2: error.response?.data?.message || error.message || 'Could not load profile.',
+          text2: error.response?.data?.message || 'Could not load profile.',
         });
+      } finally {
+        setLoading(false);
       }
     },
     [handleUnauthorized, navigation]
   );
 
-  // Fetch user barcodes
   const fetchUserBarcodes = useCallback(
     async (userId) => {
+      if (!userId) return;
       setLoading(true);
       setFetchError('');
       try {
-        if (!userId) throw new Error('Invalid user ID');
         const token = await AsyncStorage.getItem('token');
         if (!token) throw new Error('No token found');
         const response = await axios.get(`${BASE_URL}/barcodes/user/${userId}`, {
           headers: { Authorization: token },
         });
-        // Handle both old and new backend response structures
-        const barcodeData = response.data.barcodes
-          ? response.data.barcodes
-          : Array.isArray(response.data)
-          ? response.data
-          : [];
+        const barcodeData = Array.isArray(response.data) ? response.data : response.data.barcodes || [];
         setBarcodes(barcodeData);
       } catch (error) {
         if (await handleUnauthorized(error)) return;
-        const errorMessage = error.response?.data?.message || error.message || 'Failed to fetch barcodes';
+        const errorMessage = error.response?.data?.message || 'Failed to fetch barcodes';
         setFetchError(errorMessage);
         setBarcodes([]);
         Toast.show({
@@ -250,21 +244,15 @@ export default function UserDashboard({ navigation }) {
     [handleUnauthorized]
   );
 
-  // Memoized barcode list
   const memoizedBarcodes = useMemo(() => barcodes, [barcodes]);
 
-  // Memoized filtered barcodes for search
   const filteredBarcodes = useMemo(() => {
-    if (!Array.isArray(barcodes)) return [];
-    if (!searchBarcode || typeof searchBarcode !== 'string') return barcodes;
-    const searchLower = searchBarcode.toLowerCase();
-    return barcodes.filter((barcode) => {
-      const value = (barcode?.value || '').toLowerCase();
-      return value.includes(searchLower);
-    });
+    if (!Array.isArray(barcodes) || barcodes.length === 0) return [];
+    if (!searchBarcode?.trim()) return barcodes;
+    const searchLower = searchBarcode.toLowerCase().trim();
+    return barcodes.filter((barcode) => barcode?.value?.toLowerCase().includes(searchLower));
   }, [barcodes, searchBarcode]);
 
-    // Barcode scan handler
   const handleBarCodeScanned = useCallback(
     async ({ data }) => {
       setScanned(true);
@@ -279,21 +267,21 @@ export default function UserDashboard({ navigation }) {
           { value: data.toUpperCase(), location: user?.location || 'Unknown' },
           { headers: { Authorization: token } }
         );
-        await fetchUserProfile(user.id);
+        await fetchUserProfile(user?.id);
         setError('');
         Toast.show({
           type: 'success',
           text1: 'Scan Successful',
           text2: `You earned ${response.data.pointsAwarded} points!`,
         });
-        await fetchUserBarcodes(user.id);
-        setTimeout(() => setScanned(false), 1000); // Allow re-scanning
+        await fetchUserBarcodes(user?.id);
+        setTimeout(() => setScanned(false), 1000);
       } catch (error) {
         if (await handleUnauthorized(error)) return;
         const errorMessage =
           error.response?.data?.message === 'Barcode already scanned'
             ? 'Barcode already scanned'
-            : error.response?.data?.message || error.message || 'Scan failed';
+            : error.response?.data?.message || 'Scan failed';
         setError(errorMessage);
         Toast.show({
           type: 'error',
@@ -307,7 +295,6 @@ export default function UserDashboard({ navigation }) {
     [fetchUserProfile, fetchUserBarcodes, handleUnauthorized, user]
   );
 
-  // Start scanning
   const handleScanAction = useCallback(async () => {
     try {
       if (hasPermission === null || hasPermission === false) {
@@ -364,7 +351,7 @@ export default function UserDashboard({ navigation }) {
       }
     }
   }, [hasPermission]);
-  // Cancel scanning
+
   const handleCancelScan = useCallback(() => {
     setShowScanner(false);
     setScanned(false);
@@ -373,7 +360,6 @@ export default function UserDashboard({ navigation }) {
     setScanRegion(null);
   }, []);
 
-  // Select scan area
   const handleSelectScanArea = useCallback(() => {
     setScanRegion({
       top: 100,
@@ -383,7 +369,6 @@ export default function UserDashboard({ navigation }) {
     });
   }, []);
 
-  // Log out
   const handleLogout = useCallback(async () => {
     try {
       await AsyncStorage.clear();
@@ -402,8 +387,7 @@ export default function UserDashboard({ navigation }) {
     }
   }, [navigation]);
 
-  // Render content based on current tab
-  const renderContent = () => {
+  const renderContent = useCallback(() => {
     switch (currentTab) {
       case 'home':
         return (
@@ -412,18 +396,60 @@ export default function UserDashboard({ navigation }) {
               <>
                 <Card style={[styles.profileCard, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                   <Card.Content>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>Welcome, {user.name}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Mobile: {user.mobile}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {user.location || 'Unknown'}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text, fontSize: 20, fontWeight: 'bold' }]}>Points: {user.points}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text, fontSize: 20, fontWeight: 'bold' }]}>Total Scanned: {barcodes.length}</Text>
+                    <Text
+                      style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={1}
+                    >
+                      Welcome, {user.name || 'Unknown'}
+                    </Text>
+                    <Text
+                      style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={1}
+                    >
+                      Mobile: {user.mobile || 'Unknown'}
+                    </Text>
+                    <Text
+                      style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={1}
+                    >
+                      Location: {user.location || 'Unknown'}
+                    </Text>
+                    <Text
+                      style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text, fontSize: 20, fontWeight: 'bold' }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={1}
+                    >
+                      Points: {user.points ?? 0}
+                    </Text>
+                    <Text
+                      style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text, fontSize: 20, fontWeight: 'bold' }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={1}
+                    >
+                      Total Scanned: {barcodes.length}
+                    </Text>
                   </Card.Content>
                 </Card>
                 {admin && (
                   <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                     <Card.Content>
-                      <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>Assigned Admin: {admin.name}</Text>
-                      <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Admin Unique Code: {admin.uniqueCode || 'N/A'}</Text>
+                      <Text
+                        style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}
+                        adjustsFontSizeToFit
+                        numberOfLines={1}
+                      >
+                        Assigned Admin: {admin.name || 'Unknown'}
+                      </Text>
+                      <Text
+                        style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+                        adjustsFontSizeToFit
+                        numberOfLines={1}
+                      >
+                        Admin Unique Code: {admin.uniqueCode || 'N/A'}
+                      </Text>
                     </Card.Content>
                   </Card>
                 )}
@@ -435,7 +461,11 @@ export default function UserDashboard({ navigation }) {
         return Platform.OS === 'web' ? (
           <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
             <Card.Content>
-              <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+              <Text
+                style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+                adjustsFontSizeToFit
+                numberOfLines={2}
+              >
                 Barcode scanning is not supported on web browsers. Use the mobile app instead.
               </Text>
             </Card.Content>
@@ -492,11 +522,29 @@ export default function UserDashboard({ navigation }) {
             {scanned && (
               <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                 <Card.Content>
-                  <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Scanned Barcode: {barcodeData}</Text>
+                  <Text
+                    style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+                    adjustsFontSizeToFit
+                    numberOfLines={1}
+                  >
+                    Scanned Barcode: {barcodeData || 'N/A'}
+                  </Text>
                   {error ? (
-                    <Text style={[styles.error, { color: isDarkMode ? '#FF5555' : colors.error }]}>{error}</Text>
+                    <Text
+                      style={[styles.error, { color: isDarkMode ? '#FF5555' : colors.error }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={2}
+                    >
+                      {error}
+                    </Text>
                   ) : (
-                    <Text style={[styles.success, { color: isDarkMode ? '#00FF00' : colors.accent }]}>Success!</Text>
+                    <Text
+                      style={[styles.success, { color: isDarkMode ? '#00FF00' : colors.accent }]}
+                      adjustsFontSizeToFit
+                      numberOfLines={1}
+                    >
+                      Success!
+                    </Text>
                   )}
                 </Card.Content>
               </Card>
@@ -507,91 +555,112 @@ export default function UserDashboard({ navigation }) {
         return (
           <>
             {fetchError && (
-              <Text style={[styles.error, { color: isDarkMode ? '#FF5555' : colors.error }]}>{fetchError}</Text>
+              <Text
+                style={[styles.error, { color: isDarkMode ? '#FF5555' : colors.error }]}
+                adjustsFontSizeToFit
+                numberOfLines={2}
+              >
+                {fetchError}
+              </Text>
             )}
-            <SearchBar
+            <TextInput
               placeholder="Search Barcodes..."
-              onChangeText={debouncedSetSearchBarcode}
               value={searchBarcode}
-              platform="default"
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#444' : '#fff' }]}
-              inputContainerStyle={{ backgroundColor: isDarkMode ? '#555' : '#f0f0f0' }}
-              inputStyle={{ color: isDarkMode ? '#FFFFFF' : colors.text }}
+              onChangeText={setSearchBarcode}
+              style={[styles.searchBar, { backgroundColor: isDarkMode ? '#444' : '#fff', color: isDarkMode ? '#FFFFFF' : colors.text }]}
               placeholderTextColor={isDarkMode ? '#999' : '#666'}
+              autoCapitalize="none"
+              mode="outlined"
+              outlineColor={isDarkMode ? '#555' : '#ccc'}
+              activeOutlineColor={colors.primary}
             />
-            <ScrollView>
-              {filteredBarcodes.map((item) => (
+            <FlatList
+              data={filteredBarcodes}
+              keyExtractor={(item) => item._id || `barcode-${item.value}`}
+              renderItem={({ item }) => (
                 <Card key={item._id} style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                   <Card.Content>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Value: {item.value}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points: {item.pointsAwarded}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Timestamp: {new Date(item.createdAt).toLocaleString()}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Value: {item.value || 'N/A'}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points: {item.points ?? 0}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Timestamp: {item.scannedAt ? new Date(item.scannedAt).toLocaleString() : 'N/A'}</Text>
                     <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {item.location || 'Unknown'}</Text>
                   </Card.Content>
                 </Card>
-              ))}
-              {filteredBarcodes.length === 0 && !loading && (
-                <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes found.</Text>
               )}
-            </ScrollView>
-          </>
-        );
-      // case 'profile':
-        return (
-          <>
-            <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Profile</Text>
-            <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
-              <Card.Content>
-                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Name: {user?.name || 'Unknown'}</Text>
-                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Mobile: {user?.mobile || 'Unknown'}</Text>
-                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points: {user?.points || 0}</Text>
-                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Status: {user?.status === 'approved' ? 'Active' : user?.status || 'Unknown'}</Text>
-              </Card.Content>
-            </Card>
-            <Button
-              mode="contained"
-              onPress={handleLogout}
-              style={styles.button}
-              buttonColor={colors.error}
-              textColor="#FFFFFF"
-              labelStyle={styles.buttonLabel}
-            >
-              Logout
-            </Button>
+              ListEmptyComponent={() => (
+                !loading && (
+                  <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes found.</Text>
+                )
+              )}
+              contentContainerStyle={{ paddingBottom: 80 }}
+              keyboardShouldPersistTaps="handled"
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={5}
+            />
           </>
         );
       case 'barcode':
         return (
           <>
             {fetchError && (
-              <Text style={[styles.error, { color: isDarkMode ? '#FF5555' : colors.error }]}>{fetchError}</Text>
+              <Text
+                style={[styles.error, { color: isDarkMode ? '#FF5555' : colors.error }]}
+                adjustsFontSizeToFit
+                numberOfLines={2}
+              >
+                {fetchError}
+              </Text>
             )}
-            <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Your Barcodes</Text>
-            <ScrollView>
-              {memoizedBarcodes.map((item) => (
-                <Card key={item._id} style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
+            <Text
+              style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+              adjustsFontSizeToFit
+              numberOfLines={1}
+            >
+              Your Barcodes
+            </Text>
+            <FlatList
+              data={memoizedBarcodes}
+              keyExtractor={(item) => item._id || `barcode-${item.value}`}
+              renderItem={({ item }) => (
+                <Card key={item._id || index} style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                   <Card.Content>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Value: {item.value}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points: {item.pointsAwarded}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Timestamp: {new Date(item.createdAt).toLocaleString()}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {item.location || 'Unknown'}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Value: {item.value || 'N/A'}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User: {item.userId?.name || 'Unknown'} ({item.userId?.mobile || 'N/A'})</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points Awarded: {item.points ?? 0}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Timestamp: {item.scannedAt ? new Date(item.scannedAt).toLocaleString() : 'N/A'}</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {item.location || 'N/A'}</Text>
                   </Card.Content>
                 </Card>
-              ))}
-              {barcodes.length === 0 && !loading && (
-                <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned yet.</Text>
               )}
-            </ScrollView>
+              ListEmptyComponent={() => (
+                !loading && (
+                  <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned yet.</Text>
+                )
+              )}
+              contentContainerStyle={{ paddingBottom: 80 }}
+              keyboardShouldPersistTaps="handled"
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={5}
+            />
           </>
         );
       default:
         return null;
     }
-  };
+  }, [currentTab, user, admin, barcodes, filteredBarcodes, isDarkMode, colors, showScanner, scanned, barcodeData, error, loading, fetchError, handleScanAction, handleCancelScan, handleSelectScanArea, scanLineTranslate]);
 
-  // Render permission messages
   if (hasPermission === false) {
-    return <Text style={[styles.permissionText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No access to camera</Text>;
+    return (
+      <Text
+        style={[styles.permissionText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+        adjustsFontSizeToFit
+        numberOfLines={1}
+      >
+        No access to camera
+      </Text>
+    );
   }
 
   return (
@@ -614,8 +683,16 @@ export default function UserDashboard({ navigation }) {
           Logout
         </Button>
       </View>
-      <Text style={[styles.title, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User Dashboard</Text>
-      <ScrollView contentContainerStyle={styles.scrollContent}>{renderContent()}</ScrollView>
+      <Text
+        style={[styles.title, { color: isDarkMode ? '#FFFFFF' : colors.text }]}
+        adjustsFontSizeToFit
+        numberOfLines={1}
+      >
+        User Dashboard
+      </Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {renderContent()}
+      </ScrollView>
       <View style={[styles.tabBar, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
         <TouchableOpacity style={[styles.tabItem, currentTab === 'home' && styles.activeTab]} onPress={() => setCurrentTab('home')}>
           <MaterialIcons name="home" size={24} color={currentTab === 'home' ? (isDarkMode ? '#FFD700' : colors.primary) : (isDarkMode ? '#FFF' : colors.text)} />
@@ -633,10 +710,6 @@ export default function UserDashboard({ navigation }) {
           <MaterialIcons name="qr-code" size={24} color={currentTab === 'barcode' ? (isDarkMode ? '#FFD700' : colors.primary) : (isDarkMode ? '#FFF' : colors.text)} />
           <Text style={[styles.tabText, { color: currentTab === 'barcode' ? (isDarkMode ? '#FFD700' : colors.primary) : (isDarkMode ? '#FFF' : colors.text) }]}>Barcodes</Text>
         </TouchableOpacity>
-        {/* <TouchableOpacity style={[styles.tabItem, currentTab === 'profile' && styles.activeTab]} onPress={() => setCurrentTab('profile')}>
-          <MaterialIcons name="person" size={24} color={currentTab === 'profile' ? (isDarkMode ? '#FFD700' : colors.primary) : (isDarkMode ? '#FFF' : colors.text)} />
-          <Text style={[styles.tabText, { color: currentTab === 'profile' ? (isDarkMode ? '#FFD700' : colors.primary) : (isDarkMode ? '#FFF' : colors.text) }]}>Profile</Text>
-        </TouchableOpacity> */}
       </View>
     </View>
   );
@@ -830,7 +903,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 25,
     paddingHorizontal: 10,
-    borderWidth: 0,
+    height: 50,
   },
   tabBar: {
     position: 'absolute',
@@ -852,7 +925,7 @@ const styles = StyleSheet.create({
   tabItem: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingBottom: 8,
   },
   activeTab: {
     borderBottomWidth: 2,

@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 
 // const BASE_URL = 'http://localhost:5000';
-const BASE_URL = 'http://3.82.246.165:5000';
+const BASE_URL = 'http://52.72.238.42:5002';
 // 
 
 const { width } = Dimensions.get('window');

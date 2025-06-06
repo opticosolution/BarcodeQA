@@ -1,7 +1,8 @@
+//admindashboard.js
 import React, { useState, useEffect, useContext, useCallback, useMemo } from 'react';
 import { View, StyleSheet, FlatList, Text, ScrollView, ActivityIndicator, Dimensions, Alert, Platform, TouchableOpacity, Switch } from 'react-native';
 import { Button, Card, TextInput, useTheme } from 'react-native-paper';
-import { SearchBar } from '@rneui/themed';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import * as FileSystem from 'expo-file-system';
@@ -11,10 +12,12 @@ import { ThemeContext } from '../ThemeContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { BackHandler } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import debounce from 'lodash.debounce';
+
 
 // const BASE_URL = 'http://localhost:5000';
-const BASE_URL = 'http://3.82.246.165:5000';
+// const BASE_URL = 'https://barcodescane-backend.onrender.com';
+const BASE_URL = 'http://52.72.238.42:5002';
+
 
 
 const { width } = Dimensions.get('window');
@@ -58,6 +61,7 @@ export default function AdminDashboard({ navigation }) {
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [userBarcodes, setUserBarcodes] = useState([]);
   const [selectedBarcodeUser, setSelectedBarcodeUser] = useState(null);
+  const [selectedBarcodeId, setSelectedBarcodeId] = useState(null);
   const [currentTab, setCurrentTab] = useState('home');
   const [adminUser, setAdminUser] = useState(null);
   const [searchUniqueCodeResult, setSearchUniqueCodeResult] = useState(null);
@@ -123,6 +127,13 @@ export default function AdminDashboard({ navigation }) {
       setLoading(false);
     }
   }, [handleUnauthorized]);
+
+  React.useLayoutEffect(() => {
+      navigation.setOptions({
+        headerLeft: () => null, // Remove the back arrow 
+        gestureEnabled: false, // Disable swipe-back gesture on iOS
+      });
+  }, [navigation]);
 
   useEffect(() => {
     const refreshToken = async () => {
@@ -267,12 +278,18 @@ export default function AdminDashboard({ navigation }) {
     try {
       const token = await AsyncStorage.getItem('token');
       const response = await axios.get(`${BASE_URL}/barcodes/user/${userId}`, { headers: { Authorization: token } });
-      setUserBarcodes(response.data.barcodes || response.data);
+      const barcodes = Array.isArray(response.data.barcodes) ? response.data.barcodes : Array.isArray(response.data) ? response.data : [];
+      // console.log('fetchUserBarcodes response:', JSON.stringify(barcodes, null, 2)); // Temporary logging for debugging
+      setUserBarcodes(barcodes.map(barcode => ({
+        ...barcode,
+        createdAt: barcode.createdAt ? new Date(barcode.createdAt).toISOString() : new Date().toISOString(),
+        pointsAwarded: barcode.pointsAwarded ?? barcode.points ?? 0, // Handle both pointsAwarded and points
+      })));
       setSelectedUserId(userId);
-      if (!response.data.barcodes?.length && !response.data.length) Toast.show({ type: 'info', text1: 'No Barcodes' });
+      if (!barcodes.length) Toast.show({ type: 'info', text1: 'No Barcodes' });
     } catch (error) {
       if (await handleUnauthorized(error)) return;
-      Toast.show({ type: 'error', text1: 'Fetch Failed' });
+      Toast.show({ type: 'error', text1: 'Fetch Failed', text2: error.message });
       setUserBarcodes([]);
     } finally {
       setLoading(false);
@@ -480,9 +497,7 @@ export default function AdminDashboard({ navigation }) {
     }
   }, [navigation]);
 
-  const debouncedSetSearchUser = useCallback(debounce((value) => setSearchUser(value), 300), []);
-  const debouncedSetSearchBarcode = useCallback(debounce((value) => setSearchBarcode(value), 300), []);
-
+ 
   const filteredUsers = useMemo(() => {
     return users.filter(
       (user) => (user.name || '').toLowerCase().includes(searchUser.toLowerCase()) || 
@@ -494,256 +509,317 @@ export default function AdminDashboard({ navigation }) {
     return barcodes.filter((barcode) => (barcode.value || '').toLowerCase().includes(searchBarcode.toLowerCase()));
   }, [barcodes, searchBarcode]);
 
-  const getItemLayout = useCallback((data, index) => ({ length: 200, offset: 200 * index, index }), []);
+  const getItemLayout = useCallback((data, index) => ({ length: 250, offset: 250 * index, index }), []);
 
-  const renderUserItem = useCallback(({ item }) => (
-    <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
-      <Card.Content>
-        {selectedUserId !== item._id ? (
-          editUser && editUser._id === item._id ? (
-            <View style={styles.editContainer}>
-              <TextInput
-                label="Name"
-                value={editUser.name}
-                onChangeText={(text) => setEditUser({ ...editUser, name: text })}
-                style={styles.input}
-                theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-                mode="outlined"
-              />
-              <TextInput
-                label="Mobile Number"
-                value={editUser.mobile}
-                onChangeText={(text) => setEditUser({ ...editUser, mobile: text })}
-                style={styles.input}
-                theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-                mode="outlined"
-                keyboardType="phone-pad"
-              />
-              <TextInput
-                label="Location"
-                value={editUser.location}
-                onChangeText={(text) => setEditUser({ ...editUser, location: text })}
-                style={styles.input}
-                theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-                mode="outlined"
-              />
-              <TextInput
-                label="Points"
-                value={editUser.points.toString()}
-                onChangeText={(text) => setEditUser({ ...editUser, points: parseInt(text) || 0 })}
-                keyboardType="numeric"
-                style={styles.input}
-                theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-                mode="outlined"
-              />
-              <View style={styles.buttonRow}>
-                <Button
-                  mode="contained"
-                  onPress={handleEditUser}
-                  style={styles.actionButton}
-                  buttonColor={colors.primary}
-                  textColor={isDarkMode ? '#FFFFFF' : '#212121'}
-                >
-                  <ButtonText>Save</ButtonText>
-                </Button>
-                <Button
-                  mode="contained"
-                  onPress={() => setEditUser(null)}
-                  style={styles.actionButton}
-                  buttonColor={colors.secondary}
-                  textColor={isDarkMode ? '#FFFFFF' : '#212121'}
-                >
-                  <ButtonText>Cancel</ButtonText>
-                </Button>
-              </View>
-            </View>
-          ) : (
-            <>
-              <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>Name: {item.name}</Text>
-              <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Mobile: {item.mobile}</Text>
-              <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Status: {item.status === 'approved' ? 'Active' : item.status}</Text>
-              <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points: {item.points}</Text>
-              <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {item.location || 'N/A'}</Text>
-              {passwordUserId === item._id && showPassword && (
-                <View style={styles.passwordContainer}>
-                  <Text style={[styles.cardText, { color: colors.error, fontWeight: 'bold' }]}>
-                    Warning: Passwords are sensitive!
-                  </Text>
-                  <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
-                    Password: {showPassword}
-                  </Text>
-                  <Button
-                    mode="text"
-                    onPress={() => {
-                      setShowPassword(null);
-                      setPasswordUserId(null);
-                    }}
-                    textColor={isDarkMode ? '#FF5555' : colors.error}
-                  >
-                    Hide
-                  </Button>
-                </View>
-              )}
-              <View style={styles.buttonRow}>
-                {item.status === 'pending' ? (
-                  <>
-                    <Button
-                      mode="contained"
-                      onPress={() => handleStatusUpdate(item._id, 'approved')}
-                      style={styles.actionButton}
-                      buttonColor={colors.primary}
-                      textColor={isDarkMode ? '#FFF' : '#212121'}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      mode="contained"
-                      onPress={() => handleStatusUpdate(item._id, 'disapproved')}
-                      style={styles.actionButton}
-                      buttonColor={colors.error}
-                      textColor="#FFF"
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Disapprove
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={() => handleDeleteUser(item._id)}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#FF5555' : colors.error}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Delete
-                    </Button>
-                  </>
-                ) : item.status === 'disapproved' ? (
-                  <Button
-                    mode="outlined"
-                    onPress={() => handleDeleteUser(item._id)}
-                    style={styles.actionButton}
-                    textColor={isDarkMode ? '#FF5555' : colors.error}
-                    labelStyle={styles.buttonLabel}
-                  >
-                    Delete
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      mode="outlined"
-                      onPress={() => setEditUser(item)}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#FFD700' : colors.accent}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={() => handleDeleteUser(item._id)}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#FF5555' : colors.error}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Delete
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={() => handleResetPoints(item._id)}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#FFD700' : colors.accent}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Reset Points
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={() => handleDeleteUserBarcodes(item._id)}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#FF5555' : colors.error}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      Delete Barcodes
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={() => fetchUserBarcodes(item._id)}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#00FF00' : colors.accent}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      View Scanned Barcodes
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={() => {
-                        setPasswordUserId(item._id);
-                        handleViewPassword(item._id);
-                      }}
-                      style={styles.actionButton}
-                      textColor={isDarkMode ? '#FFD700' : colors.accent}
-                      labelStyle={styles.buttonLabel}
-                    >
-                      View Password
-                    </Button>
-                  </>
-                )}
-              </View>
-            </>
-          )
-        ) : (
-          <>
-            <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Scanned Barcodes of {item.name}</Text>
-            <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Total Barcodes Scanned: {userBarcodes.length}</Text>
-            <FlatList
-              data={userBarcodes}
-              keyExtractor={(barcode) => barcode._id}
-              renderItem={({ item: barcode }) => (
-                <View style={styles.barcodeItem}>
-                  <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text, flex: 1 }]}>
-                    {barcode.value} - {new Date(barcode.createdAt).toLocaleString()} - Points: {barcode.pointsAwarded} - Location: {barcode.location || 'N/A'}
-                  </Text>
+  const renderUserItem = useCallback(
+    ({ item }) => (
+      <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
+        <Card.Content>
+          {selectedUserId !== item._id ? (
+            editUser && editUser._id === item._id ? (
+              // Inline Edit Form
+              <View style={styles.editContainer}>
+                <TextInput
+                  label="Name"
+                  value={editUser.name}
+                  onChangeText={(text) => setEditUser({ ...editUser, name: text })}
+                  style={styles.input}
+                  theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
+                  mode="outlined"
+                />
+                <TextInput
+                  label="Mobile Number"
+                  value={editUser.mobile}
+                  onChangeText={(text) => setEditUser({ ...editUser, mobile: text })}
+                  style={styles.input}
+                  theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
+                  mode="outlined"
+                  keyboardType="phone-pad"
+                />
+                <TextInput
+                  label="Location"
+                  value={editUser.location}
+                  onChangeText={(text) => setEditUser({ ...editUser, location: text })}
+                  style={styles.input}
+                  theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
+                  mode="outlined"
+                />
+                <TextInput
+                  label="Points"
+                  value={editUser.points.toString()}
+                  onChangeText={(text) => setEditUser({ ...editUser, points: parseInt(text) || 0 })}
+                  keyboardType="numeric"
+                  style={styles.input}
+                  theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
+                  mode="outlined"
+                />
+                <View style={styles.buttonRow}>
                   <Button
                     mode="contained"
-                    onPress={() => handleDeleteBarcode(barcode._id)}
-                    style={[styles.actionButton, { minWidth: 80 }]}
-                    buttonColor={colors.error}
-                    textColor="#FFFFFF"
+                    onPress={handleEditUser}
+                    style={styles.actionButton}
+                    buttonColor={colors.primary}
+                    textColor={isDarkMode ? '#FFFFFF' : '#212121'}
                   >
-                    <ButtonText>Delete</ButtonText>
+                    <ButtonText>Save</ButtonText>
+                  </Button>
+                  <Button
+                    mode="contained"
+                    onPress={() => setEditUser(null)}
+                    style={styles.actionButton}
+                    buttonColor={colors.secondary}
+                    textColor={isDarkMode ? '#FFFFFF' : '#212121'}
+                  >
+                    <ButtonText>Cancel</ButtonText>
                   </Button>
                 </View>
-              )}
-              ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned.</Text>}
-              initialNumToRender={10}
-              maxToRenderPerBatch={10}
-              windowSize={5}
-              getItemLayout={getItemLayout}
-              removeClippedSubviews={true}
-            />
-            <Button
-              mode="contained"
-              onPress={() => setSelectedUserId(null)}
-              style={styles.button}
-              buttonColor={colors.primary}
-              textColor={isDarkMode ? '#FFFFFF' : '#212121'}
-            >
-              <ButtonText>Back</ButtonText>
-            </Button>
-          </>
-        )}
-      </Card.Content>
-    </Card>
-  ), [isDarkMode, colors, editUser, selectedUserId, userBarcodes, handleEditUser, handleStatusUpdate, handleDeleteUser, handleResetPoints, handleDeleteUserBarcodes, fetchUserBarcodes, handleDeleteBarcode, handleViewPassword, showPassword, passwordUserId, setPasswordUserId]);
+              </View>
+            ) : (
+              // User Details View
+              <View>
+                <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>
+                  Name: {item.name}
+                </Text>
+                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                  Mobile: {item.mobile}
+                </Text>
+                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                  Status: {item.status === 'approved' ? 'Active' : item.status}
+                </Text>
+                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                  Points: {item.points}
+                </Text>
+                <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                  Location: {item.location || 'N/A'}
+                </Text>
+
+                {/* Password View */}
+                {passwordUserId === item._id && showPassword && (
+                  <View style={styles.passwordContainer}>
+                    <Text style={[styles.cardText, { color: colors.error, fontWeight: 'bold' }]}>
+                      Warning: Passwords are sensitive!
+                    </Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                      Password: {showPassword}
+                    </Text>
+                    <Button
+                      mode="text"
+                      onPress={() => {
+                        setShowPassword(null);
+                        setPasswordUserId(null);
+                      }}
+                      textColor={isDarkMode ? '#FF5555' : colors.error}
+                    >
+                      Hide
+                    </Button>
+                  </View>
+                )}
+
+                {/* Action Buttons */}
+                <View style={styles.buttonRow}>
+                  {item.status === 'pending' ? (
+                    <>
+                      <Button
+                        mode="contained"
+                        onPress={() => handleStatusUpdate(item._id, 'approved')}
+                        style={styles.actionButton}
+                        buttonColor={colors.primary}
+                        textColor={isDarkMode ? '#FFF' : '#212121'}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Approve</ButtonText>
+                      </Button>
+                      <Button
+                        mode="contained"
+                        onPress={() => handleStatusUpdate(item._id, 'disapproved')}
+                        style={styles.actionButton}
+                        buttonColor={colors.error}
+                        textColor="#FFF"
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Disapprove</ButtonText>
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        onPress={() => handleDeleteUser(item._id)}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#FF5555' : colors.error}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Delete</ButtonText>
+                      </Button>
+                    </>
+                  ) : item.status === 'disapproved' ? (
+                    <Button
+                      mode="outlined"
+                      onPress={() => handleDeleteUser(item._id)}
+                      style={styles.actionButton}
+                      textColor={isDarkMode ? '#FF5555' : colors.error}
+                      labelStyle={styles.buttonLabel}
+                    >
+                      <ButtonText>Delete</ButtonText>
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        mode="outlined"
+                        onPress={() => setEditUser(item)}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#FFD700' : colors.accent}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Edit</ButtonText>
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        onPress={() => handleDeleteUser(item._id)}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#FF5555' : colors.error}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Delete</ButtonText>
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        onPress={() => handleResetPoints(item._id)}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#FFD700' : colors.accent}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Reset Points</ButtonText>
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        onPress={() => handleDeleteUserBarcodes(item._id)}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#FF5555' : colors.error}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>Delete Barcodes</ButtonText>
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        onPress={() => fetchUserBarcodes(item._id)}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#00FF00' : colors.accent}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>View Scanned Barcodes</ButtonText>
+                      </Button>
+                      <Button
+                        mode="outlined"
+                        onPress={() => {
+                          setPasswordUserId(item._id);
+                          handleViewPassword(item._id);
+                        }}
+                        style={styles.actionButton}
+                        textColor={isDarkMode ? '#FFD700' : colors.accent}
+                        labelStyle={styles.buttonLabel}
+                      >
+                        <ButtonText>View Password</ButtonText>
+                      </Button>
+                    </>
+                  )}
+                </View>
+              </View>
+            )
+          ) : (
+            // Scanned Barcodes View
+            <View>
+              <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                Scanned Barcodes of {item.name}
+              </Text>
+              <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                Total Barcodes: {userBarcodes.length}
+              </Text>
+              <FlatList
+                data={userBarcodes}
+                keyExtractor={(barcode) => barcode._id}
+                renderItem={({ item: barcode }) => (
+                  <View style={styles.barcodeItem}>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text, flex: 1 }]}>
+                      {barcode.value} - {barcode.createdAt ? new Date(barcode.createdAt).toLocaleString() : 'N/A'} - Points: {barcode.pointsAwarded ?? 0} - Location: {barcode.location || 'N/A'}
+                    </Text>
+                    <Button
+                      mode="contained"
+                      onPress={() => handleDeleteBarcode(barcode._id)}
+                      style={[styles.actionButton, { minWidth: 80 }]}
+                      buttonColor={colors.error}
+                      textColor="#FFFFFF"
+                    >
+                      <ButtonText>Delete</ButtonText>
+                    </Button>
+                  </View>
+                )}
+                ListEmptyComponent={() => (
+                  <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned.</Text>
+                )}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                getItemLayout={getItemLayout}
+                removeClippedSubviews={true}
+              />
+              <Button
+                mode="contained"
+                onPress={() => setSelectedUserId(null)}
+                style={styles.button}
+                buttonColor={colors.primary}
+                textColor={isDarkMode ? '#FFFFFF' : '#212121'}
+              >
+                <ButtonText>Back</ButtonText>
+              </Button>
+            </View>
+          )}
+        </Card.Content>
+      </Card>
+    ),
+    [
+      isDarkMode,
+      colors.primary,
+      colors.text,
+      colors.accent,
+      colors.error,
+      colors.secondary,
+      selectedUserId,
+      userBarcodes,
+      editUser,
+      handleEditUser,
+      handleStatusUpdate,
+      handleDeleteUser,
+      handleResetPoints,
+      handleDeleteUserBarcodes,
+      fetchUserBarcodes,
+      handleDeleteBarcode,
+      handleViewPassword,
+      showPassword,
+      passwordUserId,
+    ]
+  );
 
   const renderContent = () => {
     switch (currentTab) {
       case 'home':
         return (
           <>
+            
+            <View style={styles.header}>
+              
+              <ThemeToggle style={styles.toggle} />
+              <Button
+                mode="contained"
+                onPress={handleLogout}
+                style={styles.button}
+                buttonColor={colors.error}
+                textColor="#FFFFFF"
+              >
+                <ButtonText>Logout</ButtonText>
+              </Button>
+              
+            </View>
             <View style={styles.header}>
               <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Admin Home</Text>
-              <ThemeToggle style={styles.toggle} />
+              {/* <ThemeToggle style={styles.toggle} /> */}
             </View>
             <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
               <Card.Title title="Admin Details" titleStyle={[styles.cardTitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]} />
@@ -753,15 +829,7 @@ export default function AdminDashboard({ navigation }) {
                 <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Total Ranges Set: {barcodeRanges.length}</Text>
               </Card.Content>
             </Card>
-            <Button
-              mode="contained"
-              onPress={handleLogout}
-              style={styles.button}
-              buttonColor={colors.error}
-              textColor="#FFFFFF"
-            >
-              <ButtonText>Logout</ButtonText>
-            </Button>
+            
             <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
               <Card.Title title="Set Barcode Range" titleStyle={[styles.cardTitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]} />
               <Card.Content>
@@ -902,7 +970,9 @@ export default function AdminDashboard({ navigation }) {
                       </Card.Content>
                     </Card>
                   )}
-                  ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No ranges set.</Text>}
+                  ListEmptyComponent={() => (
+                    <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No ranges set.</Text>
+                  )}
                   initialNumToRender={10}
                   maxToRenderPerBatch={10}
                   windowSize={5}
@@ -917,19 +987,20 @@ export default function AdminDashboard({ navigation }) {
         return (
           <>
             <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Users</Text>
-            <SearchBar
+            <TextInput
               placeholder="Search Users by Name or Mobile"
               value={searchUser}
-              onChangeText={debouncedSetSearchUser}
-              inputStyle={{ color: isDarkMode ? '#FFFFFF' : colors.text }}
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}
-              round
+              onChangeText={setSearchUser}
+              style={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface, color: isDarkMode ? '#FFFFFF' : colors.text }]}
+              placeholderTextColor={isDarkMode ? '#AAAAAA' : '#666666'}
+              mode="outlined"
+              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
             />
             <FlatList
               data={filteredUsers}
               keyExtractor={(item) => item._id}
               renderItem={renderUserItem}
-              ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No users found.</Text>}
+              ListEmptyComponent={() => <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No users found.</Text>}
               initialNumToRender={10}
               maxToRenderPerBatch={10}
               windowSize={5}
@@ -942,13 +1013,14 @@ export default function AdminDashboard({ navigation }) {
         return (
           <>
             <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Search</Text>
-            <SearchBar
+            <TextInput
               placeholder="Search Users by Name or Mobile"
               value={searchUser}
-              onChangeText={debouncedSetSearchUser}
-              inputStyle={{ color: isDarkMode ? '#FFFFFF' : colors.text }}
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}
-              round
+              onChangeText={setSearchUser}
+              style={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface, color: isDarkMode ? '#FFFFFF' : colors.text }]}
+              placeholderTextColor={isDarkMode ? '#AAAAAA' : '#666666'}
+              mode="outlined"
+              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
             />
             {searchUser && (
               <FlatList
@@ -974,7 +1046,9 @@ export default function AdminDashboard({ navigation }) {
                     </Card.Content>
                   </Card>
                 )}
-                ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No users found.</Text>}
+                ListEmptyComponent={() => (
+                  <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No users found.</Text>
+                )}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
                 windowSize={5}
@@ -982,7 +1056,7 @@ export default function AdminDashboard({ navigation }) {
                 removeClippedSubviews={true}
               />
             )}
-            <TextInput
+            {/* <TextInput
               placeholder="Search by Unique Code"
               value={searchUniqueCode}
               onChangeText={setSearchUniqueCode}
@@ -990,8 +1064,8 @@ export default function AdminDashboard({ navigation }) {
               placeholderTextColor={isDarkMode ? '#AAAAAA' : '#666666'}
               mode="outlined"
               theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-            />
-            <Button
+            /> */}
+            {/* <Button
               mode="contained"
               onPress={searchByUniqueCode}
               loading={searchUniqueCodeLoading}
@@ -1001,8 +1075,8 @@ export default function AdminDashboard({ navigation }) {
               style={styles.button}
             >
               <ButtonText>Search Unique Code</ButtonText>
-            </Button>
-            {searchUniqueCodeResult && (
+            </Button> */}
+            {/* {searchUniqueCodeResult && (
               <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                 <Card.Content>
                   <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>Name: {searchUniqueCodeResult.name}</Text>
@@ -1022,14 +1096,15 @@ export default function AdminDashboard({ navigation }) {
                   </Button>
                 </Card.Content>
               </Card>
-            )}
-            <SearchBar
+            )} */}
+            <TextInput
               placeholder="Search Barcodes by Value"
               value={searchBarcode}
-              onChangeText={debouncedSetSearchBarcode}
-              inputStyle={{ color: isDarkMode ? '#FFFFFF' : colors.text }}
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}
-              round
+              onChangeText={setSearchBarcode}
+              style={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface, color: isDarkMode ? '#FFFFFF' : colors.text }]}
+              placeholderTextColor={isDarkMode ? '#AAAAAA' : '#666666'}
+              mode="outlined"
+              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
             />
             {searchBarcode && (
               <FlatList
@@ -1039,7 +1114,8 @@ export default function AdminDashboard({ navigation }) {
                   <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                     <Card.Content>
                       <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Value: {item.value}</Text>
-                      <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User: {item.userId?.name || 'Unknown'} ({item.userId?.mobile || 'N/A'})</Text>
+                      
+                      <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User: {item.userId ? `${item.userId.name || 'Unknown'} (${item.userId.mobile || 'N/A'})` : 'Unknown'}</Text>
                       <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points Awarded: {item.pointsAwarded}</Text>
                       <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Timestamp: {new Date(item.createdAt).toLocaleString()}</Text>
                       <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {item.location || 'N/A'}</Text>
@@ -1066,7 +1142,9 @@ export default function AdminDashboard({ navigation }) {
                     </Card.Content>
                   </Card>
                 )}
-                ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned.</Text>}
+                ListEmptyComponent={() => (
+                  <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned.</Text>
+                )}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
                 windowSize={5}
@@ -1080,13 +1158,14 @@ export default function AdminDashboard({ navigation }) {
         return (
           <>
             <Text style={[styles.subtitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Barcode Management</Text>
-            <SearchBar
+            <TextInput
               placeholder="Search Barcodes by Value"
               value={searchBarcode}
-              onChangeText={debouncedSetSearchBarcode}
-              inputStyle={{ color: isDarkMode ? '#FFFFFF' : colors.text }}
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}
-              round
+              onChangeText={setSearchBarcode}
+              style={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface, color: isDarkMode ? '#FFFFFF' : colors.text }]}
+              placeholderTextColor={isDarkMode ? '#AAAAAA' : '#666666'}
+              mode="outlined"
+              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
             />
             <FlatList
               data={filteredBarcodes}
@@ -1095,14 +1174,17 @@ export default function AdminDashboard({ navigation }) {
                 <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
                   <Card.Content>
                     <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Value: {item.value}</Text>
-                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User: {item.userId?.name || 'Unknown'} ({item.userId?.mobile || 'N/A'})</Text>
+                    <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User: {item?.userId?.name || 'Unknown'} ({item?.userId?.mobile || 'N/A'})</Text>
                     <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points Awarded: {item.pointsAwarded}</Text>
                     <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Timestamp: {new Date(item.createdAt).toLocaleString()}</Text>
                     <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {item.location || 'N/A'}</Text>
                     <View style={styles.buttonRow}>
                       <Button
-                        mode="contained"
-                        onPress={() => setSelectedBarcodeUser(users.find((u) => u._id === item.userId?._id))}
+                        mode="outlined"
+                        onPress={() => {
+                          setSelectedBarcodeUser(users.find((u) => u._id === item.userId?._id));
+                          setSelectedBarcodeId(item._id);
+                        }}
                         style={styles.actionButton}
                         buttonColor={colors.primary}
                         textColor={isDarkMode ? '#FFFFFF' : '#212121'}
@@ -1119,10 +1201,45 @@ export default function AdminDashboard({ navigation }) {
                         <ButtonText>Delete</ButtonText>
                       </Button>
                     </View>
+                    {/* User Details Inside Card */}
+                    {selectedBarcodeId === item._id && selectedBarcodeUser && (
+                      <View style={[styles.userDetailsContainer, { backgroundColor: isDarkMode ? '#444' : colors.background, padding: 10, marginTop: 10, borderRadius: '#333', borderWidth: 1, borderColor: '#ccc' }]}>
+                        <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>
+                          User Details
+                        </Text>
+                        <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                          Name: {selectedBarcodeUser.name}
+                        </Text>
+                        <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                          Mobile: {selectedBarcodeUser.mobile}
+                        </Text>
+                        <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                          Status: {selectedBarcodeUser.status === 'approved' ? 'Active' : selectedBarcodeUser.status}
+                        </Text>
+                        <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                          Points: {selectedBarcodeUser.points}
+                        </Text>
+                        <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>
+                          Location: {selectedBarcodeUser.location || 'N/A'}
+                        </Text>
+                        <Button
+                          mode="contained"
+                          onPress={() => {
+                            setSelectedBarcodeUser(null);
+                            setSelectedBarcodeId(null);
+                          }}
+                          style={styles.actionButton}
+                          buttonColor={colors.secondary}
+                          textColor={isDarkMode ? '#FFFFFF' : '#212121'}
+                        >
+                          <ButtonText>Close</ButtonText>
+                        </Button>
+                      </View>
+                    )}
                   </Card.Content>
                 </Card>
               )}
-              ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned.</Text>}
+              ListEmptyComponent={() => <Text style={[styles.emptyText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>No barcodes scanned.</Text>}
               initialNumToRender={10}
               maxToRenderPerBatch={10}
               windowSize={5}
@@ -1161,84 +1278,9 @@ export default function AdminDashboard({ navigation }) {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       )}
-      <ScrollView contentContainerStyle={styles.scrollContent} removeClippedSubviews={true}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {renderContent()}
-        {editUser && (
-          <View style={[styles.modal, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
-            <Text style={[styles.modalTitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Edit User</Text>
-            <TextInput
-              label="Name"
-              value={editUser.name}
-              onChangeText={(text) => setEditUser({ ...editUser, name: text })}
-              style={styles.input}
-              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-              mode="outlined"
-            />
-            <TextInput
-              label="Mobile Number"
-              value={editUser.mobile}
-              onChangeText={(text) => setEditUser({ ...editUser, mobile: text })}
-              style={styles.input}
-              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-              mode="outlined"
-              keyboardType="phone-pad"
-            />
-            <TextInput
-              label="Location"
-              value={editUser.location}
-              onChangeText={(text) => setEditUser({ ...editUser, location: text })}
-              style={styles.input}
-              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-              mode="outlined"
-            />
-            <TextInput
-              label="Points"
-              value={editUser.points.toString()}
-              onChangeText={(text) => setEditUser({ ...editUser, points: parseInt(text) || 0 })}
-              keyboardType="numeric"
-              style={styles.input}
-              theme={{ colors: { text: isDarkMode ? '#FFFFFF' : colors.text, primary: colors.primary } }}
-              mode="outlined"
-            />
-            <Button
-              mode="contained"
-              onPress={handleEditUser}
-              style={styles.button}
-              buttonColor={colors.primary}
-              textColor={isDarkMode ? '#FFFFFF' : '#212121'}
-            >
-              <ButtonText>Save</ButtonText>
-            </Button>
-            <Button
-              mode="contained"
-              onPress={() => setEditUser(null)}
-              style={styles.button}
-              buttonColor={colors.secondary}
-              textColor={isDarkMode ? '#FFFFFF' : '#212121'}
-            >
-              <ButtonText>Cancel</ButtonText>
-            </Button>
-          </View>
-        )}
-        {selectedBarcodeUser && (
-          <View style={[styles.modal, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
-            <Text style={[styles.modalTitle, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>User Details</Text>
-            <Text style={[styles.cardText, { color: isDarkMode ? '#FFD700' : colors.text, fontWeight: 'bold' }]}>Name: {selectedBarcodeUser.name}</Text>
-            <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Mobile: {selectedBarcodeUser.mobile}</Text>
-            <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Status: {selectedBarcodeUser.status === 'approved' ? 'Active' : selectedBarcodeUser.status}</Text>
-            <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Points: {selectedBarcodeUser.points}</Text>
-            <Text style={[styles.cardText, { color: isDarkMode ? '#FFFFFF' : colors.text }]}>Location: {selectedBarcodeUser.location || 'N/A'}</Text>
-            <Button
-              mode="contained"
-              onPress={() => setSelectedBarcodeUser(null)}
-              style={styles.button}
-              buttonColor={colors.secondary}
-              textColor={isDarkMode ? '#FFFFFF' : '#212121'}
-            >
-              <ButtonText>Cancel</ButtonText>
-            </Button>
-          </View>
-        )}
+       
       </ScrollView>
       <View style={[styles.tabBar, { backgroundColor: isDarkMode ? '#222' : colors.surface }]}>
         <TouchableOpacity style={[styles.tabItem, currentTab === 'home' && styles.activeTab]} onPress={() => setCurrentTab('home')}>
@@ -1284,6 +1326,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
 
+  userDetailsContainer: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+    alignItems: 'center',
+  },
   // Navigation
   tabBar: {
     flexDirection: 'row',
@@ -1330,8 +1380,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 25,
     paddingHorizontal: 10,
-    borderWidth: 0,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CCCCCC',
+  },
+  searchInput: {
+    height: 40,
+    fontSize: 16,
+    paddingHorizontal: 10,
+    borderRadius: 20,
   },
   input: {
     backgroundColor: 'transparent',

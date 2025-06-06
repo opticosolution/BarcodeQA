@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useContext, useCallback, useMemo } from 'react';
 import { View, StyleSheet, FlatList, Text, ScrollView, ActivityIndicator, Platform, TouchableOpacity, Alert, Switch } from 'react-native';
 import { Button, Card, TextInput, useTheme } from 'react-native-paper';
-import { SearchBar } from '@rneui/themed';
 import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -11,21 +10,21 @@ import { ThemeContext } from '../ThemeContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { BackHandler } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import debounce from 'lodash.debounce';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import jsPDF from 'jspdf';
-import bwipjs from 'bwip-js';
+import { Buffer } from 'buffer';
 
 // const BASE_URL = 'http://localhost:5000';
-const BASE_URL = 'http://3.82.246.165:5000';
-
+// const BASE_URL = 'https://barcodescane-backend.onrender.com';
+const BASE_URL = 'http://52.72.238.42:5002';
 
 const isWeb = Platform.OS === 'web';
 
 export default function SuperAdminDashboard({ navigation }) {
   const { colors } = useTheme();
   const { isDarkMode } = useContext(ThemeContext);
+
+  // State Declarations
   const [admins, setAdmins] = useState([]);
   const [users, setUsers] = useState([]);
   const [barcodes, setBarcodes] = useState([]);
@@ -35,6 +34,7 @@ export default function SuperAdminDashboard({ navigation }) {
   const [showPassword, setShowPassword] = useState(null);
   const [passwordAdminId, setPasswordAdminId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [currentTab, setCurrentTab] = useState('home');
   const [superAdmin, setSuperAdmin] = useState(null);
   const [selectedAdminId, setSelectedAdminId] = useState(null);
@@ -48,12 +48,12 @@ export default function SuperAdminDashboard({ navigation }) {
     mode: 'with-outline',
   });
   const [selectedAdminForUser, setSelectedAdminForUser] = useState('');
-  // New state variables for admin-defined ranges
   const [useAdminRanges, setUseAdminRanges] = useState(false);
   const [selectedRangeId, setSelectedRangeId] = useState('');
   const [adminRanges, setAdminRanges] = useState([]);
   const [pointsPerScan, setPointsPerScan] = useState('50');
 
+  // useCallback Functions (in Dependency Order)
   const showConfirmDialog = useCallback((title, message, onConfirm) => {
     if (isWeb) {
       if (window.confirm(`${title}\n${message}`)) onConfirm();
@@ -65,59 +65,6 @@ export default function SuperAdminDashboard({ navigation }) {
     }
   }, [isWeb]);
 
-  useEffect(() => {
-    const refreshToken = async () => {
-      try {
-        const credentials = await AsyncStorage.getItem('credentials');
-        if (!credentials) return;
-        const { mobile, password } = JSON.parse(credentials);
-        const response = await axios.post(`${BASE_URL}/login`, { mobile, password });
-        await AsyncStorage.setItem('token', response.data.token);
-        await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
-        Toast.show({ type: 'success', text1: 'Session Refreshed' });
-      } catch (error) {
-        Toast.show({ type: 'error', text1: 'Session Refresh Failed' });
-        await AsyncStorage.clear();
-        navigation.replace('Home');
-      }
-    };
-    const interval = setInterval(refreshToken, 50 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [navigation]);
-
-  useEffect(() => {
-    const fetchSuperAdmin = async () => {
-      try {
-        const storedUser = await AsyncStorage.getItem('user');
-        if (storedUser) setSuperAdmin(JSON.parse(storedUser));
-      } catch (error) {
-        Toast.show({ type: 'error', text1: 'Super Admin Data Fetch Failed' });
-      }
-    };
-    fetchSuperAdmin();
-    fetchData();
-  }, []);
-
-  // Fetch admin ranges when barcode tab is selected
-  useEffect(() => {
-    if (currentTab === 'barcode') {
-      fetchAdminRanges();
-    }
-  }, [currentTab]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (Platform.OS !== 'web') {
-        const onBackPress = () => {
-          navigation.navigate('SuperAdminDashboard');
-          return true;
-        };
-        BackHandler.addEventListener('hardwareBackPress', onBackPress);
-        return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
-      }
-    }, [navigation])
-  );
-
   const handleUnauthorized = useCallback(async (error) => {
     if (error.response?.status === 401) {
       await AsyncStorage.clear();
@@ -127,6 +74,61 @@ export default function SuperAdminDashboard({ navigation }) {
     }
     return false;
   }, [navigation]);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token) throw new Error('No token found');
+      const [usersRes, barcodesRes, adminsRes] = await Promise.all([
+        axios.get(`${BASE_URL}/users`, { headers: { Authorization: token } }),
+        axios.get(`${BASE_URL}/barcodes`, { headers: { Authorization: token } }),
+        axios.get(`${BASE_URL}/admins`, { headers: { Authorization: token } }),
+      ]);
+      const validUsers = usersRes.data.filter(user => user.name && user.mobile);
+      const sortedUsers = validUsers.sort((a, b) => {
+        if (a.status === 'approved' && b.status === 'approved') return b.points - a.points;
+        if (a.status === 'approved') return -1;
+        if (b.status === 'approved') return 1;
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (b.status === 'pending' && a.status !== 'pending') return 1;
+        return 0;
+      });
+      setUsers(sortedUsers.filter(user => user.role === 'user'));
+      setAdmins(adminsRes.data.map(admin => ({ id: admin._id, name: admin.name, mobile: admin.mobile, status: admin.status, uniqueCode: admin.uniqueCode })));
+      setBarcodes(barcodesRes.data);
+    } catch (error) {
+      if (await handleUnauthorized(error)) return;
+      Toast.show({
+        type: 'error',
+        text1: 'Fetch Failed',
+        text2: error.response?.data?.message || 'Could not load data.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [handleUnauthorized]);
+
+  const fetchAdminRanges = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token) throw new Error('No token found');
+      const response = await axios.get(`${BASE_URL}/barcode-ranges`, {
+        headers: { Authorization: token },
+      });
+      setAdminRanges(response.data);
+    } catch (error) {
+      if (await handleUnauthorized(error)) return;
+      Toast.show({
+        type: 'error',
+        text1: 'Fetch Failed',
+        text2: error.response?.data?.message || 'Could not fetch admin ranges.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [handleUnauthorized]);
 
   const handleViewAdminPassword = useCallback((adminId) => {
     const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(adminId);
@@ -162,62 +164,6 @@ export default function SuperAdminDashboard({ navigation }) {
       }
     });
   }, [handleUnauthorized, showConfirmDialog]);
-
-  // New function to fetch admin-defined barcode ranges
-  const fetchAdminRanges = useCallback(async () => {
-    setLoading(true);
-    try {
-      const token = await AsyncStorage.getItem('token');
-      if (!token) throw new Error('No token found');
-      const response = await axios.get(`${BASE_URL}/barcode-ranges`, {
-        headers: { Authorization: token },
-      });
-      setAdminRanges(response.data);
-    } catch (error) {
-      if (await handleUnauthorized(error)) return;
-      Toast.show({
-        type: 'error',
-        text1: 'Fetch Failed',
-        text2: error.response?.data?.message || 'Could not fetch admin ranges.',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [handleUnauthorized]);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const token = await AsyncStorage.getItem('token');
-      if (!token) throw new Error('No token found');
-      const [usersRes, barcodesRes, adminsRes] = await Promise.all([
-        axios.get(`${BASE_URL}/users`, { headers: { Authorization: token } }),
-        axios.get(`${BASE_URL}/barcodes`, { headers: { Authorization: token } }),
-        axios.get(`${BASE_URL}/admins`, { headers: { Authorization: token } }),
-      ]);
-      const validUsers = usersRes.data.filter(user => user.name && user.mobile);
-      const sortedUsers = validUsers.sort((a, b) => {
-        if (a.status === 'approved' && b.status === 'approved') return b.points - a.points;
-        if (a.status === 'approved') return -1;
-        if (b.status === 'approved') return 1;
-        if (a.status === 'pending' && b.status !== 'pending') return -1;
-        if (b.status === 'pending' && a.status !== 'pending') return 1;
-        return 0;
-      });
-      setUsers(sortedUsers.filter(user => user.role === 'user'));
-      setAdmins(adminsRes.data.map(admin => ({ id: admin._id, name: admin.name, mobile: admin.mobile, status: admin.status, uniqueCode: admin.uniqueCode })));
-      setBarcodes(barcodesRes.data);
-    } catch (error) {
-      if (await handleUnauthorized(error)) return;
-      Toast.show({
-        type: 'error',
-        text1: 'Fetch Failed',
-        text2: error.response?.data?.message || 'Could not load data.',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [handleUnauthorized]);
 
   const handleStatusUpdate = useCallback(async (userId, status) => {
     if (status === 'approved' && !selectedAdminForUser) {
@@ -383,26 +329,25 @@ export default function SuperAdminDashboard({ navigation }) {
   }, [navigation]);
 
   const generateBarcodePDF = useCallback(async () => {
+    setPdfLoading(true);
     try {
-      console.log('Starting PDF generation');
       const token = await AsyncStorage.getItem('token');
       if (!token) throw new Error('No token found');
-
       const response = await axios.post(
         `${BASE_URL}/generate-pdf`,
         {
-          barcodeSettings,
+          barcodeSettings: {
+            ...barcodeSettings,
+            pointsPerScan,
+          },
           useAdminRanges,
-          selectedRangeId,
+          selectedRangeId: useAdminRanges ? selectedRangeId : undefined,
+          selectedAdminForUser: useAdminRanges ? selectedAdminForUser : undefined,
           adminRanges,
         },
-        {
-          headers: { Authorization: token },
-        }
+        { headers: { Authorization: token } }
       );
-
       const { pdf } = response.data;
-
       if (Platform.OS === 'web') {
         const downloadPDF = () => {
           try {
@@ -428,7 +373,6 @@ export default function SuperAdminDashboard({ navigation }) {
         });
         await Sharing.shareAsync(fileUri, { mimeType: 'application/pdf' });
       }
-
       Toast.show({ type: 'success', text1: 'PDF Generated' });
     } catch (error) {
       console.error('PDF Generation Error:', error);
@@ -437,34 +381,125 @@ export default function SuperAdminDashboard({ navigation }) {
         text1: 'PDF Generation Failed',
         text2: error.response?.data?.message || error.message,
       });
+    } finally {
+      setPdfLoading(false);
     }
-  }, [barcodeSettings, useAdminRanges, selectedRangeId, adminRanges]);
-  const debouncedSetSearchAdmin = useCallback(debounce((value) => setSearchAdmin(value), 2), []);
-  const debouncedSetSearchUser = useCallback(debounce((value) => setSearchUser(value), 2), []);
-  const debouncedSetSearchBarcode = useCallback(debounce((value) => setSearchBarcode(value), 2), []);
+  }, [barcodeSettings, useAdminRanges, selectedRangeId, selectedAdminForUser, pointsPerScan, adminRanges]);
 
+  // useMemo Hooks
   const filteredAdmins = useMemo(() => admins.filter(
-    (admin) => (admin.name || '').toLowerCase().includes(searchAdmin.toLowerCase()) || (admin.mobile || '').toLowerCase().includes(searchAdmin.toLowerCase()) || (admin.uniqueCode || '').toLowerCase().includes(searchAdmin.toLowerCase())
+    (admin) => (admin.name || '').toLowerCase().includes(searchAdmin.toLowerCase()) || 
+              (admin.mobile || '').toLowerCase().includes(searchAdmin.toLowerCase()) || 
+              (admin.uniqueCode || '').toLowerCase().includes(searchAdmin.toLowerCase())
   ), [admins, searchAdmin]);
 
   const filteredUsers = useMemo(() => users.filter(
-    (user) => (user.name || '').toLowerCase().includes(searchUser.toLowerCase()) || (user.mobile || '').toLowerCase().includes(searchUser.toLowerCase())
+    (user) => (user.name || '').toLowerCase().includes(searchUser.toLowerCase()) || 
+              (user.mobile || '').toLowerCase().includes(searchUser.toLowerCase())
   ), [users, searchUser]);
 
   const filteredBarcodes = useMemo(() => barcodes.filter(
     (barcode) => (barcode.value || '').toLowerCase().includes(searchBarcode.toLowerCase())
   ), [barcodes, searchBarcode]);
 
-  const getItemLayout = useCallback((data, index) => ({ length: 200, offset: 200 * index, index }), []);
+  const getItemLayout = useCallback((data, index) => ({ length: 250, offset: 250 * index, index }), []);
 
+  // useEffect and Other Hooks
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => null,
+      gestureEnabled: false,
+    });
+  }, [navigation]);
+
+  useEffect(() => {
+    const refreshToken = async () => {
+      try {
+        const credentials = await AsyncStorage.getItem('credentials');
+        if (!credentials) return;
+        const { mobile, password } = JSON.parse(credentials);
+        const response = await axios.post(`${BASE_URL}/login`, { mobile, password });
+        await AsyncStorage.setItem('token', response.data.token);
+        await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
+        Toast.show({ type: 'success', text1: 'Session Refreshed' });
+      } catch (error) {
+        Toast.show({ type: 'error', text1: 'Session Refresh Failed' });
+        await AsyncStorage.clear();
+        navigation.replace('Home');
+      }
+    };
+    const interval = setInterval(refreshToken, 50 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [navigation]);
+
+  useEffect(() => {
+    const fetchSuperAdmin = async () => {
+      try {
+        const storedUser = await AsyncStorage.getItem('user');
+        if (storedUser) setSuperAdmin(JSON.parse(storedUser));
+      } catch (error) {
+        Toast.show({ type: 'error', text1: 'Super Admin Data Fetch Failed' });
+      }
+    };
+    fetchSuperAdmin();
+    fetchData();
+  }, [fetchData]);
+
+  //working all done
+
+  useEffect(() => {
+    // Initial fetch
+    if (currentTab === 'barcode') {
+      fetchAdminRanges({ silent: false }); // show loader only initially
+    }
+
+    // Periodic background refresh
+    const refreshInterval = setInterval(() => {
+      fetchData(); // assume it’s lightweight or silent
+
+      if (currentTab === 'barcode') {
+        fetchAdminRanges({ silent: true }); // silent = no loading spinner
+      }
+    }, 30000);
+
+    return () => clearInterval(refreshInterval);
+  }, [currentTab, fetchData, fetchAdminRanges]);
+
+
+  useEffect(() => {
+    // Reset selectedRangeId when selectedAdminForUser changes
+    if (useAdminRanges) {
+      setSelectedRangeId('');
+    }
+  }, [selectedAdminForUser, useAdminRanges]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'web') {
+        const onBackPress = () => {
+          navigation.navigate('SuperAdminDashboard');
+          return true;
+        };
+        BackHandler.addEventListener('hardwareBackPress', onBackPress);
+        return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+      }
+    }, [navigation])
+  );
+
+  // Render Logic
   const renderContent = () => {
     switch (currentTab) {
       case 'home':
         return (
           <>
             <View style={styles.header}>
-              <Text style={[styles.subtitle, { color: isDarkMode ? '#FFF' : colors.text }]}>Super Admin Home</Text>
               <ThemeToggle style={styles.toggle} />
+              <Button mode="contained" onPress={handleLogout} style={styles.button} buttonColor={colors.error} textColor="#FFF" labelStyle={styles.buttonLabel}>
+                Logout
+              </Button>
+            </View>
+            <View style={styles.header}>
+              <Text style={[styles.subtitle, { color: isDarkMode ? '#FFF' : colors.text }]}>Super Admin Home</Text>
             </View>
             <Card style={[styles.card, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
               <Card.Content>
@@ -474,23 +509,22 @@ export default function SuperAdminDashboard({ navigation }) {
                 <Text style={[styles.cardText, { color: isDarkMode ? '#FFF' : colors.text }]}>Barcodes: {barcodes.length}</Text>
               </Card.Content>
             </Card>
-            <Button mode="contained" onPress={handleLogout} style={styles.button} buttonColor={colors.error} textColor="#FFF" labelStyle={styles.buttonLabel}>
-              Logout
-            </Button>
           </>
         );
       case 'admins':
         return (
           <>
             <Text style={[styles.subtitle, { color: isDarkMode ? '#FFF' : colors.text }]}>Admins</Text>
-            <SearchBar
-              placeholder="Search Admins"
-              value={searchAdmin}
-              onChangeText={debouncedSetSearchAdmin}
-              inputStyle={{ color: isDarkMode ? '#FFF' : colors.text }}
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}
-              round
-            />
+            <View style={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}>
+              <TextInput
+                placeholder="Search Admins"
+                value={searchAdmin}
+                onChangeText={setSearchAdmin}
+                style={[styles.searchInput, { color: isDarkMode ? '#FFF' : colors.text }]}
+                placeholderTextColor={isDarkMode ? '#AAA' : '#666'}
+                autoCapitalize="none"
+              />
+            </View>
             <FlatList
               data={filteredAdmins}
               keyExtractor={(item) => item.id}
@@ -632,7 +666,9 @@ export default function SuperAdminDashboard({ navigation }) {
                               </Button>
                             </View>
                           )}
-                          ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No barcodes found.</Text>}
+                          ListEmptyComponent={() => (
+                            <Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No barcodes found.</Text>
+                          )}
                           initialNumToRender={10}
                           maxToRenderPerBatch={10}
                           windowSize={5}
@@ -653,7 +689,9 @@ export default function SuperAdminDashboard({ navigation }) {
                   </Card.Content>
                 </Card>
               )}
-              ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No admins found.</Text>}
+              ListEmptyComponent={() => (
+                <Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No admins found.</Text>
+              )}
               initialNumToRender={10}
               maxToRenderPerBatch={10}
               windowSize={5}
@@ -678,14 +716,16 @@ export default function SuperAdminDashboard({ navigation }) {
                 ))}
               </Picker>
             </View>
-            <SearchBar
-              placeholder="Search Users"
-              value={searchUser}
-              onChangeText={debouncedSetSearchUser}
-              inputStyle={{ color: isDarkMode ? '#FFF' : colors.text }}
-              containerStyle={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}
-              round
-            />
+            <View style={[styles.searchBar, { backgroundColor: isDarkMode ? '#555' : colors.surface }]}>
+              <TextInput
+                placeholder="Search Users"
+                value={searchUser}
+                onChangeText={setSearchUser}
+                style={[styles.searchInput, { color: isDarkMode ? '#FFF' : colors.text }]}
+                placeholderTextColor={isDarkMode ? '#AAA' : '#666'}
+                autoCapitalize="none"
+              />
+            </View>
             <FlatList
               data={filteredUsers}
               keyExtractor={(item) => item._id}
@@ -785,7 +825,7 @@ export default function SuperAdminDashboard({ navigation }) {
                           keyExtractor={(barcode) => barcode._id}
                           renderItem={({ item: barcode }) => (
                             <View style={styles.barcodeItem}>
-                              <Text style={[styles.cardText, { color: isDarkMode ? '#FFF' : colors.text, flex: 1 }]}>{barcode.value} - {new Date(barcode.createdAt).toLocaleString()} - Points: {barcode.pointsAwarded}</Text>
+                              <Text style={[styles.cardText, { color: isDarkMode ? '#FFF' : colors.text, flex: 1 }]}>{barcode.value} - {barcode.createdAt ? new Date(barcode.createdAt).toLocaleString() : 'N/A'} - Points: {barcode.pointsAwarded ?? 0}</Text>
                               <Button
                                 mode="outlined"
                                 onPress={() => handleDeleteBarcode(barcode._id)}
@@ -797,7 +837,9 @@ export default function SuperAdminDashboard({ navigation }) {
                               </Button>
                             </View>
                           )}
-                          ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No barcodes found.</Text>}
+                          ListEmptyComponent={() => (
+                            <Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No barcodes found.</Text>
+                          )}
                           initialNumToRender={10}
                           maxToRenderPerBatch={10}
                           windowSize={5}
@@ -818,7 +860,9 @@ export default function SuperAdminDashboard({ navigation }) {
                   </Card.Content>
                 </Card>
               )}
-              ListEmptyComponent={<Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No users found.</Text>}
+              ListEmptyComponent={() => (
+                <Text style={[styles.emptyText, { color: isDarkMode ? '#FFF' : colors.text }]}>No users found.</Text>
+              )}
               initialNumToRender={10}
               maxToRenderPerBatch={10}
               windowSize={5}
@@ -837,7 +881,13 @@ export default function SuperAdminDashboard({ navigation }) {
                   <Text style={[styles.hintText, { color: isDarkMode ? '#AAA' : '#666' }]}>Use Admin-Defined Ranges</Text>
                   <Switch
                     value={useAdminRanges}
-                    onValueChange={setUseAdminRanges}
+                    onValueChange={(value) => {
+                      setUseAdminRanges(value);
+                      if (!value) {
+                        setSelectedAdminForUser('');
+                        setSelectedRangeId('');
+                      }
+                    }}
                     trackColor={{ false: '#767577', true: colors.primary }}
                     thumbColor={useAdminRanges ? '#f4f3f4' : '#f4f3f4'}
                   />
@@ -846,19 +896,38 @@ export default function SuperAdminDashboard({ navigation }) {
                   <>
                     <View style={[styles.pickerContainer, { backgroundColor: isDarkMode ? '#444' : '#fff' }]}>
                       <Picker
+                        selectedValue={selectedAdminForUser}
+                        onValueChange={(itemValue) => {
+                          setSelectedAdminForUser(itemValue);
+                          setSelectedRangeId(''); // Reset range when admin changes
+                        }}
+                        style={[styles.picker, { color: isDarkMode ? '#FFF' : colors.text }]}
+                        dropdownIconColor={isDarkMode ? '#FFF' : colors.text}
+                      >
+                        <Picker.Item label="Select Admin" value="" />
+                        {admins.map((admin) => (
+                          <Picker.Item key={admin.id} label={admin.name} value={admin.id} />
+                        ))}
+                      </Picker>
+                    </View>
+                    <View style={[styles.pickerContainer, { backgroundColor: isDarkMode ? '#444' : '#fff' }]}>
+                      <Picker
                         selectedValue={selectedRangeId}
                         onValueChange={(itemValue) => setSelectedRangeId(itemValue)}
                         style={[styles.picker, { color: isDarkMode ? '#FFF' : colors.text }]}
                         dropdownIconColor={isDarkMode ? '#FFF' : colors.text}
+                        enabled={!!selectedAdminForUser} // Disable until admin is selected
                       >
                         <Picker.Item label="Select Range" value="" />
-                        {adminRanges.map((range) => (
-                          <Picker.Item
-                            key={range._id}
-                            label={`Range: ${range.start || 'N/A'} to ${range.end || 'N/A'}`}
-                            value={range._id}
-                          />
-                        ))}
+                        {adminRanges
+                          .filter(range => range.adminId?._id === selectedAdminForUser || range.adminId === selectedAdminForUser)
+                          .map((range) => (
+                            <Picker.Item
+                              key={range._id}
+                              label={`${range.start} - ${range.end} (Points: ${range.points})`}
+                              value={range._id}
+                            />
+                          ))}
                       </Picker>
                     </View>
                     <TextInput
@@ -954,9 +1023,10 @@ export default function SuperAdminDashboard({ navigation }) {
                   buttonColor={colors.primary}
                   textColor="#FFF"
                   labelStyle={styles.buttonLabel}
-                  disabled={useAdminRanges && !selectedRangeId}
+                  disabled={useAdminRanges && (!selectedRangeId || !selectedAdminForUser)}
+                  loading={pdfLoading}
                 >
-                  Generate PDF
+                  {pdfLoading ? 'Generating PDF...' : 'Generate PDF'}
                 </Button>
               </Card.Content>
             </Card>
@@ -974,7 +1044,7 @@ export default function SuperAdminDashboard({ navigation }) {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       )}
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {renderContent()}
       </ScrollView>
       <View style={[styles.tabBar, { backgroundColor: isDarkMode ? '#333' : colors.surface }]}>
@@ -1020,7 +1090,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 25,
     paddingHorizontal: 10,
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: '#CCC',
+  },
+  searchInput: {
+    height: 40,
+    fontSize: 16,
+    paddingHorizontal: 10,
+    borderRadius: 20,
   },
   pickerContainer: {
     width: '100%',

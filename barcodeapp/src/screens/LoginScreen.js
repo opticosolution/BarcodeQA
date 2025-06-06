@@ -12,7 +12,7 @@ import { useFocusEffect } from '@react-navigation/native';
 // Backend API base URL
 
 // const BASE_URL = 'http://localhost:5000';
-const BASE_URL = 'http://3.82.246.165:5000';
+const BASE_URL = 'http://52.72.238.42:5002';
 
 
 export default function LoginScreen({ navigation, route }) {

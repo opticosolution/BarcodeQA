@@ -63,8 +63,8 @@ const withCleartextTraffic = require('./withCleartextTraffic');
 
 module.exports = {
   expo: {
-    name: 'DemoBarcodeAws',
-    slug: 'BarcodeScannerApp',
+    name: 'BarcodeQAAws',
+    slug: 'BarcodeQAApp',
     version: '1.0.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
@@ -89,7 +89,7 @@ module.exports = {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#ffffff',
       },
-      package: 'com.jay123y.barcodeawsdemo',
+      package: 'com.expoopticosolution.barcodeaws',
       permissions: [
         'CAMERA',
         'INTERNET',
@@ -110,11 +110,10 @@ module.exports = {
       'expo-barcode-scanner',
       withCleartextTraffic, // 👈 Your custom plugin
     ],
-    owner: 'jay123y',
-    extra: {
-      eas: {
-        "projectId": "1e093677-0b04-49b4-b9e7-08efb353e4fc"
-      },
+     "extra": {
+      "eas": {
+        "projectId": "53bafccc-c35f-428a-bc15-deba658ea914"
+      }
     },
     newArchEnabled: true,
   },
