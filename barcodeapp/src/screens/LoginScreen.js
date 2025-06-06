@@ -11,7 +11,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 // Backend API base URL
 
-// const BASE_URL = 'http://localhost:5000';
+// const BASE_URL = 'http://localhost:5002';
 const BASE_URL = 'http://52.72.238.42:5002';
 
 

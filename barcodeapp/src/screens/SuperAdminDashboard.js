@@ -14,7 +14,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Buffer } from 'buffer';
 
-// const BASE_URL = 'http://localhost:5000';
+// const BASE_URL = 'http://localhost:5002';
 // const BASE_URL = 'https://barcodescane-backend.onrender.com';
 const BASE_URL = 'http://52.72.238.42:5002';
 
@@ -387,6 +387,7 @@ export default function SuperAdminDashboard({ navigation }) {
   }, [barcodeSettings, useAdminRanges, selectedRangeId, selectedAdminForUser, pointsPerScan, adminRanges]);
 
   // useMemo Hooks
+ 
   const filteredAdmins = useMemo(() => admins.filter(
     (admin) => (admin.name || '').toLowerCase().includes(searchAdmin.toLowerCase()) || 
               (admin.mobile || '').toLowerCase().includes(searchAdmin.toLowerCase()) || 

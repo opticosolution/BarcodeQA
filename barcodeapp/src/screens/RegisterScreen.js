@@ -9,7 +9,7 @@ import { ThemeContext } from '../ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 
 
-// const BASE_URL = 'http://localhost:5000';
+// const BASE_URL = 'http://localhost:5002';
 const BASE_URL = 'http://52.72.238.42:5002';
 // 
 

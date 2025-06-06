@@ -938,10 +938,10 @@ app.delete('/barcodes/:id', authenticateToken, async (req, res) => {
       pointsDeducted: barcode.pointsAwarded,
       user: user
         ? {
-            id: user._id,
-            name: user.name,
-            newPoints: user.points,
-          }
+          id: user._id,
+          name: user.name,
+          newPoints: user.points,
+        }
         : null,
     });
   } catch (error) {
@@ -1181,7 +1181,7 @@ app.put('/barcode-ranges/:id', authenticateToken, checkRole(['admin', 'superadmi
           suffix = generateRandomSuffix();
           fullValue = `${current}-${suffix}`;
         } while (await PreGeneratedBarcode.findOne({ value: fullValue }));
-        
+
         barcodes.push({
           value: fullValue,
           baseValue: current,
@@ -1190,7 +1190,7 @@ app.put('/barcode-ranges/:id', authenticateToken, checkRole(['admin', 'superadmi
           adminId: req.user._id,
           points: newPoints,
         });
-        
+
         const prefix = current.match(/^[A-Z]+/)?.[0] || '';
         const number = parseInt(current.match(/\d+$/)?.[0] || '0');
         current = `${prefix}${number + 1}`;
@@ -1298,9 +1298,8 @@ app.post('/generate-barcode-pdf', authenticateToken, checkRole(['superadmin']), 
     doc.on('data', buffers.push.bind(buffers));
     doc.on('end', () => {
       const pdfData = Buffer.concat(buffers);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename=barcodes.pdf');
-      res.send(pdfData);
+      const base64PDF = pdfData.toString('base64');
+      res.json({ pdf: base64PDF });
     });
 
     // ✅ Layout config

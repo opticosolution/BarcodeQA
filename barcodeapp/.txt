@@ -1,0 +1,154 @@
+app.post('/generate-barcode-pdf', authenticateToken, checkRole(['superadmin']), async (req, res) => {
+  try {
+    const { rangeId, start, end, prefix } = req.body;
+    let barcodes = [];
+
+    if (rangeId) {
+      // ✅ Load pre-generated from DB
+      const preGeneratedBarcodes = await PreGeneratedBarcode.find({ rangeId });
+      if (!preGeneratedBarcodes.length) {
+        return res.status(400).json({ message: 'No barcodes found for this range' });
+      }
+
+      barcodes = preGeneratedBarcodes.map(b => ({
+        value: b.value,
+        points: b.points || 0,
+      }));
+    } else if (start && end && prefix) {
+      // ✅ Temporary barcodes (no suffix, not stored)
+      let current = parseInt(start);
+      const stop = parseInt(end);
+      if (isNaN(current) || isNaN(stop) || current > stop) {
+        return res.status(400).json({ message: 'Invalid start or end values' });
+      }
+
+      while (current <= stop) {
+        barcodes.push({
+          value: `${prefix}${current}`,
+          points: 50,
+        });
+        current++;
+      }
+    } else {
+      return res.status(400).json({ message: 'Provide either rangeId or start/end/prefix' });
+    }
+
+    // ✅ Setup PDF
+    const PDFDocument = require('pdfkit');
+    const bwipjs = require('bwip-js');
+    const doc = new PDFDocument({ size: 'A4', margin: 20 });
+    const buffers = [];
+
+    doc.on('data', buffers.push.bind(buffers));
+    doc.on('end', () => {
+      const pdfData = Buffer.concat(buffers);
+      const base64PDF = pdfData.toString('base64');
+      res.json({ pdf: base64PDF });
+    });
+
+    // ✅ Layout config
+    const cols = 4;
+    const rows = 10;
+    const boxWidth = 130;
+    const boxHeight = 100;
+    const padding = 15;
+
+    let x = doc.page.margins.left;
+    let y = doc.page.margins.top;
+    let count = 0;
+
+    for (const barcode of barcodes) {
+      const pngBuffer = await bwipjs.toBuffer({
+        bcid: 'code128',
+        text: barcode.value,
+        scale: 1,
+        height: 20,
+        includetext: false,
+      });
+
+      doc.rect(x, y, boxWidth, boxHeight).stroke();
+      doc.image(pngBuffer, x + 15, y + 10, { width: boxWidth - 30 });
+      doc.fontSize(10).text(barcode.value, x + 10, y + 40, { width: boxWidth - 20, align: 'center' });
+      doc.fontSize(9).text(`Points: ${barcode.points}`, x + 10, y + 60, { align: 'center' });
+
+      count++;
+      x += boxWidth + padding;
+      if (count % cols === 0) {
+        x = doc.page.margins.left;
+        y += boxHeight + padding;
+      }
+      if (count % (cols * rows) === 0 && count < barcodes.length) {
+        doc.addPage();
+        x = doc.page.margins.left;
+        y = doc.page.margins.top;
+      }
+    }
+
+    doc.end();
+  } catch (error) {
+    console.error('Error generating PDF:', error);
+    res.status(500).json({ message: 'Server error generating PDF' });
+  }
+});
+
+
+
+frontend code------
+
+const generateBarcodePDF = useCallback(async () => {
+    setPdfLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token) throw new Error('No token found');
+      const response = await axios.post(
+        `${BASE_URL}/generate-pdf`,
+        {
+          barcodeSettings: {
+            ...barcodeSettings,
+            pointsPerScan,
+          },
+          useAdminRanges,
+          selectedRangeId: useAdminRanges ? selectedRangeId : undefined,
+          selectedAdminForUser: useAdminRanges ? selectedAdminForUser : undefined,
+          adminRanges,
+        },
+        { headers: { Authorization: token } }
+      );
+      const { pdf } = response.data;
+      if (Platform.OS === 'web') {
+        const downloadPDF = () => {
+          try {
+            const byteCharacters = atob(pdf);
+            const byteArray = new Uint8Array([...byteCharacters].map((c) => c.charCodeAt(0)));
+            const blob = new Blob([byteArray], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'barcodes.pdf';
+            link.click();
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            console.error('Web PDF Download Error:', err);
+            throw new Error('Failed to download PDF on web');
+          }
+        };
+        downloadPDF();
+      } else {
+        const fileUri = `${FileSystem.documentDirectory}barcodes.pdf`;
+        await FileSystem.writeAsStringAsync(fileUri, pdf, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await Sharing.shareAsync(fileUri, { mimeType: 'application/pdf' });
+      }
+      Toast.show({ type: 'success', text1: 'PDF Generated' });
+    } catch (error) {
+      console.error('PDF Generation Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'PDF Generation Failed',
+        text2: error.response?.data?.message || error.message,
+      });
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [barcodeSettings, useAdminRanges, selectedRangeId, selectedAdminForUser, pointsPerScan, adminRanges]);
